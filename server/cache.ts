@@ -1,7 +1,12 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { setDefaultResultOrder } from 'node:dns';
 import { join } from 'node:path';
 import { createLimiter } from './rateLimit.js';
+
+// Many hosts (Docker especially) resolve IPv6 addresses but cannot route IPv6. Upstreams that
+// publish IPv6 records, such as Open-Meteo, would then stall until the 10 s connect timeout.
+setDefaultResultOrder('ipv4first');
 
 const directory = process.env.CACHE_DIR || join(process.cwd(), '.cache');
 const memory = new Map<string, { expires: number; value: unknown }>();
@@ -60,18 +65,31 @@ function withinUpstreamBudget(host: string) {
   return limiter('all').allowed;
 }
 
-export async function remoteText(url: URL | string): Promise<string> {
-  if (!withinUpstreamBudget(new URL(url).hostname)) throw new Error('Nocturne is busy right now. Please try again in a minute.');
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(25_000),
-    headers: { 'User-Agent': process.env.JPL_USER_AGENT || 'Nocturne/1.0 (personal local observatory; http://localhost:3001)', Accept: 'application/json, text/plain' },
-  });
-  if (!response.ok) throw new Error(`The public data service returned HTTP ${response.status}. Please try again later.`);
+export async function remoteText(url: URL | string, timeoutMs = 25_000): Promise<string> {
+  const host = new URL(url).hostname;
+  if (!withinUpstreamBudget(host)) throw new Error('Nocturne is busy right now. Please try again in a minute.');
+  const started = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { 'User-Agent': process.env.JPL_USER_AGENT || 'Nocturne/1.0 (personal local observatory; http://localhost:3001)', Accept: 'application/json, text/plain' },
+    });
+  } catch (error) {
+    // Network failures are otherwise invisible behind friendly messages; log the cause for operators.
+    const cause = (error as { cause?: { code?: string; message?: string } }).cause;
+    console.error(`Upstream ${host} failed after ${Date.now() - started} ms: ${cause?.code || (error as Error).name} ${cause?.message || (error as Error).message}`);
+    throw error;
+  }
+  if (!response.ok) {
+    console.error(`Upstream ${host} returned HTTP ${response.status} after ${Date.now() - started} ms`);
+    throw new Error(`The public data service returned HTTP ${response.status}. Please try again later.`);
+  }
   const body = await response.text();
   if (body.length > 12_000_000) throw new Error('The public data response is unexpectedly large.');
   return body;
 }
-export async function remoteJson<T>(url: URL | string): Promise<T> {
-  try { return JSON.parse(await remoteText(url)) as T; }
+export async function remoteJson<T>(url: URL | string, timeoutMs?: number): Promise<T> {
+  try { return JSON.parse(await remoteText(url, timeoutMs)) as T; }
   catch (error) { if (error instanceof SyntaxError) throw new Error('The public data service returned an unreadable response.'); throw error; }
 }

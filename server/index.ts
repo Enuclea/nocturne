@@ -31,7 +31,8 @@ app.get('/api/geocode', rateLimit(15, 60_000, 'Too many city searches. Please wa
     const results = await cached(`geocode:${query.toLowerCase()}`, 7 * 24 * 3600_000, async () => {
       const url = new URL('https://geocoding-api.open-meteo.com/v1/search');
       url.search = new URLSearchParams({ name: query, count: '8', language: 'en', format: 'json' }).toString();
-      const data = await remoteJson<{ results?: { name: string; latitude: number; longitude: number; elevation?: number; timezone?: string; admin1?: string; country?: string }[] }>(url);
+      // Fail fast enough to answer before proxies in front of the server give up (about 10 s).
+      const data = await remoteJson<{ results?: { name: string; latitude: number; longitude: number; elevation?: number; timezone?: string; admin1?: string; country?: string }[] }>(url, 8_000);
       return (data.results || []).map(item => ({ name: [item.name, item.admin1 !== item.name ? item.admin1 : '', item.country].filter(Boolean).join(', '), latitude: item.latitude, longitude: item.longitude, elevation: item.elevation || 0, timezone: item.timezone || 'UTC' } as ObserverLocation));
     });
     res.json({ results, source: 'Open-Meteo / GeoNames' });

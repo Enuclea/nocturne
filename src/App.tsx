@@ -40,8 +40,9 @@ function countdown(future: string, now: Date) {
 }
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || 'The data source is temporarily unavailable. Please try again.');
+  // A proxy in front of the server (such as Cloudflare) can answer with plain text or HTML.
+  const body = await response.json().catch(() => null);
+  if (!response.ok || body === null) throw new Error(body?.error || (response.status === 429 ? 'Too many requests. Please wait a minute and try again.' : 'The data source is temporarily unavailable. Please try again.'));
   return body;
 }
 function Modal({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
