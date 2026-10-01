@@ -60,3 +60,4 @@
 .sky-meteor-guide.is-selected { color: #eadbb8; }
 .sky-meteor-guide.is-selected > i { border-color: #e3cd9680; }
 .sky-meteor-guide-line.is-selected { border-top-color: #e3cd9666; }
+.sky-meteor-guide.is-left > span { left: auto; right: 11px; }

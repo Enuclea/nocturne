@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { METEOR_SHOWERS, activeShowers, nextShower, peakDate, peakLabel } from '../src/lib/meteorShowers';
+import { METEOR_SHOWERS, activeShowers, followTime, nextShower, peakDate, peakLabel, showerInfo } from '../src/lib/meteorShowers';
+import { getSunAltitude } from '../src/lib/astronomy';
 import type { ObserverLocation, StarRecord } from '../src/types';
 
 const ny: ObserverLocation = { name: 'New York', latitude: 40.7128, longitude: -74.006, elevation: 10, timezone: 'America/New_York' };
@@ -47,4 +48,27 @@ test('next shower and peak labels', () => {
   assert.equal(peakLabel(-2.6), 'Peak in 3 days');
   assert.equal(peakLabel(0.2), 'Peak tonight');
   assert.equal(peakLabel(1), 'Peaked 1 day ago');
+});
+
+test('following an inactive shower travels to a dark peak night with the radiant high', () => {
+  const now = new Date('2026-10-01T16:00Z');
+  const info = showerInfo(shower('geminids'), now, ny);
+  assert.equal(info.active, false);
+  assert.ok(hoursFrom(info.peak, '2026-12-14T07:00Z') < 12);
+  const follow = followTime(info, now, ny)!;
+  assert.ok(Math.abs(follow.time.getTime() - info.peak.getTime()) < 16 * 3_600_000);
+  assert.ok(getSunAltitude(follow.time, ny) < -12);
+  assert.ok(follow.altitude > 70, `altitude ${follow.altitude}`);
+  assert.ok(showerInfo(shower('geminids'), follow.time, ny).active);
+});
+
+test('following an active shower looks ahead to tonight, and reports showers that never rise', () => {
+  const now = new Date('2026-10-01T16:00Z');
+  const follow = followTime(showerInfo(shower('southern-taurids'), now, ny), now, ny)!;
+  assert.ok(follow.time > now && follow.time.getTime() - now.getTime() < 86_400_000);
+  assert.ok(getSunAltitude(follow.time, ny) < -12 && follow.altitude > 40);
+  // The Eta Aquariid radiant never clears the horizon in a dark sky from far northern Norway in May.
+  const tromso: ObserverLocation = { ...ny, name: 'Tromsø', latitude: 69.65, longitude: 18.96, timezone: 'Europe/Oslo' };
+  const may = new Date('2026-05-01T12:00Z');
+  assert.equal(followTime(showerInfo(shower('eta-aquariids'), may, tromso), may, tromso), null);
 });

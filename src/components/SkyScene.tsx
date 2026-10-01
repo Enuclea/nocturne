@@ -803,6 +803,8 @@ function buildScene(host: HTMLDivElement, labelHost: HTMLDivElement, initial: Sk
         if(!guideShown) continue;
         guide.element.style.transform=`translate3d(${point.x.toFixed(1)}px,${point.y.toFixed(1)}px,0)`;
         const dx=center.x-point.x, dy=center.y-point.y, length=Math.hypot(dx,dy);
+        // Keep a nearby guide's name clear of the radiant label, which sits to the radiant's right.
+        guide.element.classList.toggle('is-left',dx>0 && length<170);
         const visibleLength=Math.max(0,length-24);
         guide.line.style.width=`${visibleLength.toFixed(1)}px`;
         guide.line.style.transform=`translate3d(${point.x.toFixed(1)}px,${point.y.toFixed(1)}px,0) rotate(${Math.atan2(dy,dx).toFixed(4)}rad) translateX(10px)`;

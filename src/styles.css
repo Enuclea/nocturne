@@ -38,3 +38,4 @@
 .brand p,.live-indicator,.sky-heading,.observing-panel>.eyebrow,.observing-panel>p,.sky-coordinate-readout,.bottom-note{transition:opacity .3s,visibility .3s}.minimal-ui :is(.brand p,.live-indicator,.sky-heading,.observing-panel>.eyebrow,.observing-panel>p,.sky-coordinate-readout,.bottom-note){opacity:0;visibility:hidden}.minimal-ui :is(.explorer-heading,.category-subtitle,.explorer-footer){display:none}.minimal-ui .object-search{margin-top:0}.detail-close{width:22px;height:22px;margin:-4px -6px -4px 0}
 .category.no-matches .category-toggle{opacity:.4}
 .shower-finder{-webkit-line-clamp:unset;display:block}.shower-finder strong{color:#d8c49c;font-weight:500}.meteor-portrait{color:var(--gold);margin:0 4px 0 17px;display:grid;place-items:center;opacity:.85}.settings-popover>.meteor-summary{color:#c9b38c;margin-top:12px}
+.object-metrics strong.metric-date{font-size:15px}

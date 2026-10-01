@@ -1,5 +1,5 @@
 import * as A from 'astronomy-engine';
-import { equatorialToHorizontal } from './astronomy';
+import { equatorialToHorizontal, getSunAltitude } from './astronomy';
 import type { ObserverLocation } from '../types';
 
 const DAY = 86_400_000;
@@ -37,14 +37,18 @@ export const METEOR_SHOWERS: MeteorShower[] = [
   { id: 'ursids', name: 'Ursids', parent: 'comet 8P/Tuttle', peakLongitude: 270.7, start: -5, end: 4, ra: 217, dec: 76, raDrift: 0, decDrift: 0, zhr: 10, velocity: 33, guides: ['Kochab', 'Polaris'], finder: 'Beside Kochab, the bright end of the Little Dipper’s bowl, not far from Polaris.' },
 ];
 
-export interface ActiveShower {
-  shower: MeteorShower;
-  daysFromPeak: number; peak: Date;
+export interface ShowerInfo {
+  shower: MeteorShower; active: boolean;
+  /** Days from the nearest peak (negative before it). */
+  daysFromPeak: number;
+  /** The nearest peak while active, otherwise the next one. */
+  peak: Date;
   ra: number; dec: number;
   altitude: number; azimuth: number;
   /** 0–1 visual weight combining peak rate and closeness to the peak. */
   strength: number;
 }
+export type ActiveShower = ShowerInfo;
 
 /** Apparent solar longitude in the J2000 ecliptic frame, in degrees. */
 export function solarLongitude(date: Date) {
@@ -64,25 +68,59 @@ export function peakDate(shower: MeteorShower, date: Date) {
   return new Date(time);
 }
 
-export function activeShowers(date: Date, observer: ObserverLocation): ActiveShower[] {
-  return METEOR_SHOWERS.flatMap(shower => {
-    const days = daysFromPeak(shower, date);
-    if (days < shower.start || days > shower.end) return [];
-    const ra = (shower.ra + shower.raDrift * days + 360) % 360;
-    const dec = shower.dec + shower.decDrift * days;
-    const { altitude, azimuth } = equatorialToHorizontal(ra / 15, dec, date, observer);
-    const closeness = 1 - Math.min(1, Math.abs(days) / Math.max(-shower.start, shower.end));
-    const strength = Math.min(1, 0.25 + 0.75 * Math.sqrt(shower.zhr / 150) * (0.35 + 0.65 * closeness));
-    return [{ shower, daysFromPeak: days, peak: peakDate(shower, date), ra, dec, altitude, azimuth, strength }];
-  }).sort((a, b) => b.strength - a.strength);
+/** The first peak after `date`. */
+export function nextPeak(shower: MeteorShower, date: Date) {
+  let days = -daysFromPeak(shower, date);
+  if (days < 0) days += 365.2422;
+  return peakDate(shower, new Date(date.getTime() + days * DAY));
+}
+
+export function showerInfo(shower: MeteorShower, date: Date, observer: ObserverLocation): ShowerInfo {
+  const days = daysFromPeak(shower, date);
+  const active = days >= shower.start && days <= shower.end;
+  // Outside the activity window, show the radiant where it will first appear.
+  const driftDays = Math.min(shower.end, Math.max(shower.start, days));
+  const ra = (shower.ra + shower.raDrift * driftDays + 360) % 360;
+  const dec = shower.dec + shower.decDrift * driftDays;
+  const { altitude, azimuth } = equatorialToHorizontal(ra / 15, dec, date, observer);
+  const closeness = 1 - Math.min(1, Math.abs(days) / Math.max(-shower.start, shower.end));
+  const strength = Math.min(1, 0.25 + 0.75 * Math.sqrt(shower.zhr / 150) * (0.35 + 0.65 * closeness));
+  return { shower, active, daysFromPeak: days, peak: active ? peakDate(shower, date) : nextPeak(shower, date), ra, dec, altitude, azimuth, strength };
+}
+
+export function activeShowers(date: Date, observer: ObserverLocation): ShowerInfo[] {
+  return METEOR_SHOWERS.map(shower => showerInfo(shower, date, observer)).filter(x => x.active).sort((a, b) => b.strength - a.strength);
 }
 
 export function nextShower(date: Date) {
   return METEOR_SHOWERS.map(shower => {
-    let days = -daysFromPeak(shower, date);
-    if (days < 0) days += 365.2422;
-    return { shower, peak: new Date(date.getTime() + days * DAY), days };
+    const peak = nextPeak(shower, date);
+    return { shower, peak, days: (peak.getTime() - date.getTime()) / DAY };
   }).sort((a, b) => a.days - b.days)[0];
+}
+
+/**
+ * The darkest-sky moment between `from` and `to` when the radiant stands highest,
+ * or null when it never rises in a dark sky (for example, a southern shower seen from far north).
+ */
+export function bestViewingTime(shower: MeteorShower, observer: ObserverLocation, from: Date, to: Date) {
+  let best: { time: Date; altitude: number } | null = null;
+  for (const darkness of [-12, -6]) {
+    for (let time = from.getTime(); time <= to.getTime(); time += 10 * 60_000) {
+      const date = new Date(time);
+      if (getSunAltitude(date, observer) > darkness) continue;
+      const { altitude } = showerInfo(shower, date, observer);
+      if (altitude > 0 && (!best || altitude > best.altitude)) best = { time: date, altitude };
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+/** Where a shower is best followed: tonight while it is active, otherwise its next peak night. */
+export function followTime(info: ShowerInfo, now: Date, observer: ObserverLocation) {
+  if (info.active) return bestViewingTime(info.shower, observer, now, new Date(now.getTime() + DAY));
+  return bestViewingTime(info.shower, observer, new Date(info.peak.getTime() - 16 * 3_600_000), new Date(info.peak.getTime() + 16 * 3_600_000));
 }
 
 export function peakLabel(days: number) {

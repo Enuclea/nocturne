@@ -4,7 +4,7 @@ import Logo from './components/Logo';
 import MeteorIcon from './components/MeteorIcon';
 import SkyScene from './components/SkyScene';
 import { cardinalDirection, computeSatellites, computeSky, getMoonPhase, getRiseEvent, getSunAltitude, getVisibility, modeMagnitudeLimit } from './lib/astronomy';
-import { activeShowers, nextShower, peakLabel } from './lib/meteorShowers';
+import { METEOR_SHOWERS, followTime, nextShower, peakLabel, showerInfo } from './lib/meteorShowers';
 import { SimulationClock } from './lib/simulation-clock';
 import type { Category, EphemerisResult, MeteorRadiant, ObserverLocation, ObservingMode, SatelliteRecord, SkyObject, SmallBodyRecord, StarRecord } from './types';
 
@@ -18,6 +18,7 @@ const GROUPS: { id: Category; name: string; icon: typeof Star; subtitle: string 
   { id: 'asteroid', name: 'Asteroids', icon: Layers3, subtitle: 'Worlds in miniature' },
   { id: 'satellite', name: 'Satellites', icon: Globe2, subtitle: 'Human lights in orbit' },
 ];
+type ExplorerGroup = Category | 'meteor';
 const MODES: { id: ObservingMode; label: string; icon: typeof Eye }[] = [{ id: 'eye', label: 'Naked eye', icon: Eye }, { id: 'binocular', label: 'Binoculars', icon: Binoculars }, { id: 'telescope', label: 'Telescope', icon: Telescope }];
 function formatDate(date: Date, timezone: string, options: Intl.DateTimeFormatOptions) { return new Intl.DateTimeFormat('en-US', { ...options, timeZone: timezone }).format(date); }
 function zonedInput(date: Date, timezone: string) {
@@ -85,9 +86,9 @@ export default function App() {
   const [satelliteWarning, setSatelliteWarning] = useState('Loading orbital elements…');
   const [catalog, setCatalog] = useState<SmallBodyRecord[]>([]);
   const [catalogWarning, setCatalogWarning] = useState('');
-  const [expanded, setExpanded] = useState<Category[]>(['planet']);
+  const [expanded, setExpanded] = useState<ExplorerGroup[]>(['planet']);
   const [search, setSearch] = useState('');
-  const [searchToggles, setSearchToggles] = useState<Category[]>([]);
+  const [searchToggles, setSearchToggles] = useState<ExplorerGroup[]>([]);
   const [remoteSearch, setRemoteSearch] = useState<SmallBodyRecord[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -170,7 +171,8 @@ export default function App() {
   const sunAltitude = useMemo(() => getSunAltitude(calculatedDate, observer), [calculatedDate, observer]);
   const moonPhase = useMemo(() => getMoonPhase(calculatedDate), [calculatedDate]);
   const visibility = selected ? getVisibility(selected, mode, sunAltitude) : null;
-  const showers = useMemo(() => meteors ? activeShowers(calculatedDate, observer) : [], [meteors, calculatedDate, observer]);
+  const allShowers = useMemo(() => METEOR_SHOWERS.map(shower => showerInfo(shower, calculatedDate, observer)), [calculatedDate, observer]);
+  const showers = useMemo(() => meteors ? allShowers.filter(x => x.active).sort((a, b) => b.strength - a.strength) : [], [meteors, allShowers]);
   const upcomingShower = useMemo(() => nextShower(calculatedDate), [calculatedDate]);
   const meteorRadiants = useMemo<MeteorRadiant[]>(() => {
     const stars = new Map(backgroundObjects.filter(x => x.category === 'star').map(x => [x.name, x]));
@@ -179,11 +181,21 @@ export default function App() {
       guides: shower.guides.flatMap(name => { const star = stars.get(name); return star ? [{ name, altitude: star.altitude, azimuth: star.azimuth }] : []; }),
     }));
   }, [showers, backgroundObjects]);
-  const selectedShower = showers.find(x => x.shower.id === selectedShowerId);
+  const selectedShower = allShowers.find(x => x.shower.id === selectedShowerId);
+  const showerInView = !!selectedShower && selectedShower.active && selectedShower.altitude > 0 && sunAltitude < -12;
+  const showerFollow = useMemo(() => selectedShower && !showerInView ? followTime(selectedShower, calculatedDate, observer) : null, [selectedShowerId, showerInView, calculatedDate, observer]);
+  const pendingShowerFocus = useRef<string | null>(null);
+  useEffect(() => {
+    const id = pendingShowerFocus.current; if (!id) return;
+    pendingShowerFocus.current = null;
+    const info = allShowers.find(x => x.shower.id === id);
+    if (info && info.altitude > 0) setFocus({ id: '', azimuth: info.azimuth, altitude: info.altitude, nonce: Date.now() });
+  }, [allShowers]);
   const headlineShower = showers.find(x => Math.abs(x.daysFromPeak) <= 3);
   const moon = backgroundObjects.find(x => x.id === 'moon');
   useEffect(() => { if (!meteors) setSelectedShowerId(null); }, [meteors]);
-  const selectShower = useCallback((id: string) => { setSelectedShowerId(id); setSidebarOpen(false); }, []);
+  const selectShower = useCallback((id: string) => { setSelectedShowerId(id); setMeteors(true); setSidebarOpen(false); }, []);
+  const toggleGroup = (id: ExplorerGroup) => (searchText ? setSearchToggles : setExpanded)(previous => previous.includes(id) ? previous.filter(x => x !== id) : [...previous, id]);
   const minuteBucket = Math.floor(date.getTime() / 60000);
   const rise = useMemo(() => {
     if (selectedMinor) return currentEphemeris?.rise || null;
@@ -255,10 +267,13 @@ export default function App() {
     return groups;
   }, [localObjects, minorBodies, searchText]);
   useEffect(() => setSearchToggles([]), [searchText]);
+  const showerEntries = useMemo(() => allShowers
+    .filter(({ shower }) => !searchText || shower.name.toLowerCase().includes(searchText) || shower.parent.toLowerCase().includes(searchText))
+    .sort((a, b) => Number(b.active) - Number(a.active) || (a.active ? b.strength - a.strength : a.peak.getTime() - b.peak.getTime())), [allShowers, searchText]);
   const searchSmallBodies = async () => {
     if (search.trim().length < 2) return;
     setSearchLoading(true); setSearchError('');
-    try { const data = await getJson<{ objects: SmallBodyRecord[] }>(`/api/search?q=${encodeURIComponent(search.trim())}`); setRemoteSearch(previous => [...previous, ...data.objects]); setExpanded(previous => [...new Set([...previous, 'comet', 'asteroid'] as Category[])]); if (!data.objects.length) setSearchError('No matching small bodies. Try a designation, such as C/2023 A3.'); }
+    try { const data = await getJson<{ objects: SmallBodyRecord[] }>(`/api/search?q=${encodeURIComponent(search.trim())}`); setRemoteSearch(previous => [...previous, ...data.objects]); setExpanded(previous => [...new Set([...previous, 'comet', 'asteroid'] as ExplorerGroup[])]); if (!data.objects.length) setSearchError('No matching small bodies. Try a designation, such as C/2023 A3.'); }
     catch (e) { setSearchError((e as Error).message); } finally { setSearchLoading(false); }
   };
   const applyLocation = (location: ObserverLocation) => { setObserver(location); setDialog(null); setLocationQuery(''); setLocationResults([]); if (selectedId) pendingFocus.current = selectedId; };
@@ -298,7 +313,7 @@ export default function App() {
         {GROUPS.map(({ id, name, icon: Icon, subtitle }) => {
           const entries = groupedObjects[id]; const open = searchText ? (entries.length > 0) !== searchToggles.includes(id) : expanded.includes(id);
           return <section className={`category ${open ? 'expanded' : ''} ${searchText && !entries.length ? 'no-matches' : ''}`} key={id}>
-            <button className="category-toggle" aria-expanded={open} onClick={() => (searchText ? setSearchToggles : setExpanded)(previous => previous.includes(id) ? previous.filter(x => x !== id) : [...previous, id])}><Icon size={17} strokeWidth={1.4} /><span>{name}</span><span className="category-count">{(id === 'planet' ? entries.filter(object => object.id !== 'sun').length : entries.length).toString().padStart(2, '0')}</span><ChevronDown size={13} className="category-chevron" /></button>
+            <button className="category-toggle" aria-expanded={open} onClick={() => toggleGroup(id)}><Icon size={17} strokeWidth={1.4} /><span>{name}</span><span className="category-count">{(id === 'planet' ? entries.filter(object => object.id !== 'sun').length : entries.length).toString().padStart(2, '0')}</span><ChevronDown size={13} className="category-chevron" /></button>
             <div className="category-content" inert={!open} aria-hidden={!open}><div className="category-content-inner"><p className="category-subtitle">{subtitle}</p>{entries.slice(0, id === 'star' ? 45 : 150).map(object => {
               const celestial = 'altitude' in object ? object as SkyObject : undefined;
               const positionAvailable = celestial && celestial.available !== false && Number.isFinite(celestial.altitude);
@@ -311,6 +326,15 @@ export default function App() {
             </div></div>
           </section>;
         })}
+        {(() => {
+          const open = searchText ? (showerEntries.length > 0) !== searchToggles.includes('meteor') : expanded.includes('meteor');
+          return <section className={`category ${open ? 'expanded' : ''} ${searchText && !showerEntries.length ? 'no-matches' : ''}`}>
+            <button className="category-toggle" aria-expanded={open} onClick={() => toggleGroup('meteor')}><MeteorIcon size={17} strokeWidth={1.4} /><span>Meteor showers</span><span className="category-count">{showerEntries.length.toString().padStart(2, '0')}</span><ChevronDown size={13} className="category-chevron" /></button>
+            <div className="category-content" inert={!open} aria-hidden={!open}><div className="category-content-inner"><p className="category-subtitle">Dust trails we cross every year</p>{showerEntries.map(info => <button key={info.shower.id} className={`object-row ${selectedShowerId === info.shower.id ? 'selected' : ''}`} onClick={() => selectShower(info.shower.id)}><span className="object-dot meteor" style={{ '--object-color': info.active ? '#dfc69a' : '#8e969d' } as React.CSSProperties} /><span className="object-name">{info.shower.name}</span><span className={`object-status ${info.active && info.altitude > 0 && sunAltitude < -12 ? 'visible' : ''}`} title={info.active ? 'Active now · radiant altitude' : 'Next peak'}>{info.active ? info.altitude >= 0 ? `${Math.round(info.altitude)}°` : 'Below' : formatDate(info.peak, observer.timezone, { month: 'short', day: 'numeric' })}</span>{selectedShowerId === info.shower.id && <span className="selected-mark" />}</button>)}
+            {!showerEntries.length && <p className="collection-note">No matches in this collection.</p>}
+            </div></div>
+          </section>;
+        })()}
         {searchText.length >= 2 && <div className="remote-search"><button onClick={searchSmallBodies} disabled={searchLoading}>{searchLoading ? <LoaderCircle className="spin" size={14} /> : <Orbit size={14} />} Search NASA small bodies <ArrowUpRight size={13} /></button><p>Find a comet or asteroid by name or designation.</p>{searchError && <p className="inline-error" role="status">{searchError}</p>}</div>}
       </div>
       <div className="explorer-footer"><span className="tiny-dot" /><span>{starWarning || `${stars.length ? stars.length.toLocaleString() : 'Bright'} stars. Endless possibilities.`}</span><button aria-label="Catalog coverage and sources" onClick={() => setDialog('help')}><ArrowUpRight size={14} /></button></div>
@@ -327,12 +351,12 @@ export default function App() {
       {selected ? <><div className="object-metrics"><div><span>ALTITUDE</span><strong>{Number.isFinite(selected.altitude) ? selected.altitude.toFixed(1) : '—'}<small>°</small></strong></div><div><span>AZIMUTH</span><strong>{Number.isFinite(selected.azimuth) ? selected.azimuth.toFixed(0) : '—'}<small>° {Number.isFinite(selected.azimuth) ? cardinalDirection(selected.azimuth) : ''}</small></strong></div><div><span>MAGNITUDE</span><strong>{selected.magnitude === null ? '—' : selected.magnitude.toFixed(1)}</strong></div></div>{(selected.warning || (!visibility?.visible && selected.altitude >= 0)) && <p className="visibility-note">{selected.warning || visibility?.reason}</p>}<div className="detail-bottom"><button className="focus-button" onClick={() => { if (selected.available !== false && selected.altitude >= 0) focusObject(selected); else if (rise) { const next = new Date(new Date(rise.time).getTime() + (rise.kind === 'pass' ? 20000 : 5 * 60000)); pendingFocus.current = selected.id; setSimulationDate(next); } }} disabled={selected.available === false || (selected.altitude < 0 && !rise)}><Crosshair size={14} />{selected.available === false ? 'Position unavailable' : selected.altitude >= 0 ? 'Center in sky' : rise ? (rise.kind === 'pass' ? 'See next pass' : 'See it rise') : 'Below horizon'}</button>{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer" title={selected.source}>Source <ArrowUpRight size={12} /></a> : <span className="detail-source">{selected.source}</span>}</div></> : <div className="ephemeris-state">{ephemerisError ? <><p className="inline-error">{ephemerisError}</p><button className="text-button" onClick={() => setRetry(x => x + 1)}>Try again <ArrowRight size={13} /></button></> : <><LoaderCircle size={17} className="spin" /><span>Finding its position with NASA JPL…</span></>}</div>}
     </section>}
 
-    {selectedShower && <section className="object-detail shower-detail" aria-label="Selected meteor shower" aria-live="polite"><div className="detail-topline"><span className="eyebrow">METEOR SHOWER / PEAK {formatDate(selectedShower.peak, observer.timezone, { month: 'short', day: 'numeric' }).toUpperCase()}</span><span className={`detail-visibility ${selectedShower.altitude > 0 && sunAltitude < -12 ? 'is-visible' : ''}`}><i />{selectedShower.altitude <= 0 ? 'Radiant below horizon' : sunAltitude < -12 ? 'Look up now' : 'Wait for darkness'}</span><button className="icon-button detail-close" aria-label="Close meteor shower details" onClick={() => setSelectedShowerId(null)}><X size={14} /></button></div>
+    {selectedShower && <section className="object-detail shower-detail" aria-label="Selected meteor shower" aria-live="polite"><div className="detail-topline"><span className="eyebrow">METEOR SHOWER / PEAK {formatDate(selectedShower.peak, observer.timezone, { month: 'short', day: 'numeric' }).toUpperCase()}</span><span className={`detail-visibility ${showerInView ? 'is-visible' : ''}`}><i />{!selectedShower.active ? 'Not active now' : selectedShower.altitude <= 0 ? 'Radiant below horizon' : sunAltitude < -12 ? 'Look up now' : 'Wait for darkness'}</span><button className="icon-button detail-close" aria-label="Close meteor shower details" onClick={() => setSelectedShowerId(null)}><X size={14} /></button></div>
       <div className="detail-title"><h2>{selectedShower.shower.name}</h2><span className="meteor-portrait"><MeteorIcon size={26} strokeWidth={1.4} /></span></div>
       <p className="detail-description shower-finder"><strong>Where to look.</strong> {selectedShower.shower.finder} Meteors appear anywhere in the sky; their trails point back here.</p>
-      <div className="object-metrics"><div><span>RADIANT ALT</span><strong>{selectedShower.altitude.toFixed(1)}<small>°</small></strong></div><div><span>AZIMUTH</span><strong>{selectedShower.azimuth.toFixed(0)}<small>° {cardinalDirection(selectedShower.azimuth)}</small></strong></div><div><span>PEAK RATE</span><strong>{selectedShower.shower.zhr}<small>/hr</small></strong></div></div>
-      <p className="visibility-note">{peakLabel(selectedShower.daysFromPeak)}. {moon && moon.altitude > 0 && moonPhase > 0.5 ? `The ${Math.round(moonPhase * 100)}% Moon is up and will hide fainter meteors.` : selectedShower.shower.note || `Debris from ${selectedShower.shower.parent}.`}</p>
-      <div className="detail-bottom"><button className="focus-button" disabled={selectedShower.altitude <= 0} onClick={() => setFocus({ id: '', azimuth: selectedShower.azimuth, altitude: selectedShower.altitude, nonce: Date.now() })}><Crosshair size={14} />{selectedShower.altitude > 0 ? 'Center radiant' : 'Below horizon'}</button><a href="https://www.imo.net/resources/calendar/" target="_blank" rel="noreferrer" title="International Meteor Organization">IMO calendar <ArrowUpRight size={12} /></a></div>
+      <div className="object-metrics">{selectedShower.active ? <><div><span>RADIANT ALT</span><strong>{selectedShower.altitude.toFixed(1)}<small>°</small></strong></div><div><span>AZIMUTH</span><strong>{selectedShower.azimuth.toFixed(0)}<small>° {cardinalDirection(selectedShower.azimuth)}</small></strong></div></> : <><div><span>ACTIVE FROM</span><strong className="metric-date">{formatDate(new Date(selectedShower.peak.getTime() + selectedShower.shower.start * 86_400_000), observer.timezone, { month: 'short', day: 'numeric' })}</strong></div><div><span>PEAK</span><strong className="metric-date">{formatDate(selectedShower.peak, observer.timezone, { month: 'short', day: 'numeric' })}</strong></div></>}<div><span>PEAK RATE</span><strong>{selectedShower.shower.zhr}<small>/hr</small></strong></div></div>
+      <p className="visibility-note">{selectedShower.active ? peakLabel(selectedShower.daysFromPeak) : `Next peak ${formatDate(selectedShower.peak, observer.timezone, { weekday: 'long', month: 'long', day: 'numeric' })}`}. {selectedShower.active && moon && moon.altitude > 0 && moonPhase > 0.5 ? `The ${Math.round(moonPhase * 100)}% Moon is up and will hide fainter meteors.` : selectedShower.shower.note || `Debris from ${selectedShower.shower.parent}.`}</p>
+      <div className="detail-bottom"><button className="focus-button" disabled={!showerInView && !showerFollow} title={showerFollow ? `Travel to ${formatDate(showerFollow.time, observer.timezone, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}, when the radiant is highest in a dark sky` : undefined} onClick={() => { if (showerInView) setFocus({ id: '', azimuth: selectedShower.azimuth, altitude: selectedShower.altitude, nonce: Date.now() }); else if (showerFollow) { pendingShowerFocus.current = selectedShower.shower.id; setSimulationDate(showerFollow.time); } }}><Crosshair size={14} />{showerInView ? 'Center radiant' : showerFollow ? selectedShower.active ? `See it ${formatDate(showerFollow.time, observer.timezone, { hour: 'numeric', minute: '2-digit' })}` : 'Go to peak night' : 'Not visible from here'}</button><a href="https://www.imo.net/resources/calendar/" target="_blank" rel="noreferrer" title="International Meteor Organization">IMO calendar <ArrowUpRight size={12} /></a></div>
     </section>}
     {selected && showDetail && !selectedShower && selected.available !== false && (selected.altitude < 0 || (selected.category === 'satellite' && selected.observable === false)) && <div className="rise-banner"><div className="rise-direction"><ArrowUpRight size={22} style={{ transform: `rotate(${(rise?.azimuth || selected.azimuth) - 45}deg)` }} /></div><div><span className="eyebrow">{rise ? `LOOK ${cardinalDirection(rise.azimuth).toUpperCase()} · ${Math.round(rise.azimuth)}°` : 'BEYOND YOUR HORIZON'}</span><p>{selected.name} {rise ? <>{rise.kind === 'pass' ? 'pass begins in' : 'rises in'} <strong>{countdown(rise.time, date)}</strong></> : (selected.category === 'satellite' ? 'has no predicted visible pass in the forecast window' : 'does not rise in the forecast window')}</p></div>{rise && <button onClick={() => { pendingFocus.current = selected.id; setSimulationDate(new Date(new Date(rise.time).getTime() + (rise.kind === 'pass' ? 20000 : 5 * 60000))); }}><span className="rise-time-full">{formatDate(new Date(rise.time), observer.timezone, { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' })}</span><span className="rise-time-compact">{formatDate(new Date(rise.time), observer.timezone, { hour: 'numeric', minute: '2-digit' })} {timeZoneLabel}</span><ArrowRight size={15} /></button>}</div>}
 
