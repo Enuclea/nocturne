@@ -1,0 +1,15 @@
+services:
+  nocturne:
+    build: .
+    ports:
+      - "${SKY_PORT:-8088}:3001"
+    environment:
+      NODE_ENV: production
+      CACHE_DIR: /data/cache
+      JPL_USER_AGENT: ${JPL_USER_AGENT:-Nocturne/1.0 (personal local observatory; http://localhost:8088)}
+    volumes:
+      - sky-cache:/data/cache
+    restart: unless-stopped
+    init: true
+volumes:
+  sky-cache:

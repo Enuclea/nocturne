@@ -1,0 +1,36 @@
+.sky-scene { position: absolute; inset: 0; overflow: hidden; background: #050b15; isolation: isolate; }
+.sky-canvas-host { position: absolute; inset: 0; cursor: grab; touch-action: none; outline: none; }
+.sky-canvas-host.is-dragging { cursor: grabbing; }
+.sky-canvas-host:focus-visible::after { content: ''; position: absolute; inset: 6px; border: 1px solid #b6a57e70; border-radius: 12px; pointer-events: none; }
+.sky-canvas-host canvas { display: block; width: 100%; height: 100%; }
+.sky-label-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.sky-optical-vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 56% 36%, transparent 40%, #03060c0d 85%, #03060c26 110%); }
+.sky-object-label { position: absolute; left: 0; top: 0; margin: 0; padding: 0; border: 0; background: transparent; color: #d7d8d3bd; font: 400 11px/1.5 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .04em; white-space: nowrap; text-shadow: 0 1px 8px #020711; cursor: pointer; pointer-events: auto; translate: 12px -50%; transition: color 180ms; }
+.sky-object-label:hover { color: #f6e7c5; }
+.sky-object-label:focus-visible { outline: 1px solid #c9b98f; outline-offset: 5px; border-radius: 2px; }
+.sky-star-label { color: #a5b6c277; font-size: 10px; letter-spacing: .055em; }
+.sky-compass-label { position: absolute; left: 0; top: 0; translate: -50% 18px; color: #8f9faaaa; font: 400 9px/1 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .15em; }
+.sky-compass-label::before { content: ''; position: absolute; width: 1px; height: 6px; background: #9bafbe38; left: calc(50% - 1px); top: -14px; }
+.sky-compass-major { color: #b5c0cbd1; font-size: 11px; }
+.sky-compass-major::before { height: 11px; top: -19px; background: #adbcca5c; }
+.sky-selection-marker { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; color: #dbcb9f; }
+.sky-selection-ring { position: absolute; width: 34px; height: 34px; left: -17px; top: -17px; border: 1px solid #d7c49477; border-radius: 50%; box-shadow: 0 0 18px #dbc58d0b; }
+.sky-selection-ring::before, .sky-selection-ring::after { content: ''; position: absolute; background: #e3cd9699; }
+.sky-selection-ring::before { height: 1px; width: 5px; left: -5px; top: 15px; box-shadow: 38px 0 0 #e3cd9699; }
+.sky-selection-ring::after { height: 5px; width: 1px; left: 15px; top: -5px; box-shadow: 0 38px 0 #e3cd9699; }
+.sky-marker-predicted .sky-selection-ring { border-style: dashed; opacity: .7; }
+.sky-marker-predicted .sky-selection-name { color: #b1b4b8; }
+.sky-selection-name { position: absolute; left: 25px; top: -7px; color: #e5d7b7; font: 400 12px/1.2 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .045em; white-space: nowrap; text-shadow: 0 1px 12px #000; }
+.sky-edge-marker { position: absolute; left: 0; top: 0; display: flex; gap: 8px; align-items: center; color: #d0bd91bd; translate: -50% -50%; font: 10px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .05em; }
+.sky-edge-arrow { display: block; color: #e0c78e; font-size: 21px; line-height: 1; }
+.sky-webgl-fallback { position: absolute; top: 40%; left: 50%; width: min(350px,70vw); translate: -50% -50%; text-align: center; color: #bdc3ca; font: 13px/1.7 -apple-system, BlinkMacSystemFont, sans-serif; }
+.sky-webgl-fallback h2 { color: #e4ddce; font: 30px/1.3 Georgia, serif; font-weight: 400; margin: 15px 0; }
+.sky-fallback-star { font-size: 40px; color: #bdac84; }
+.sky-webgl-fallback p:last-child { font-size: 11px; color: #858f9a; }
+@media (max-width: 650px) {
+  .sky-star-label { display: none !important; }
+  .sky-object-label { font-size: 10px; }
+  .sky-selection-name { font-size: 11px; }
+  .sky-edge-name { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .sky-object-label { transition: none; } }
