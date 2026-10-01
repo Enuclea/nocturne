@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { equatorialToHorizontal, getSunAltitude, getVisibility } from '../lib/astronomy';
 import { skyRotation, updateSkyClock } from '../lib/skyMotion';
-import type { ObserverLocation, SkyObject, SkySceneProps } from '../types';
+import type { MeteorRadiant, ObserverLocation, SkyObject, SkySceneProps } from '../types';
 import './SkyScene.css';
 
 const RAD = Math.PI / 180;
@@ -22,6 +22,10 @@ type ConstellationData = { features: { geometry: { type: string; coordinates: nu
 type Label = { element: HTMLElement; object?: SkyObject; position: THREE.Vector3; compass?: boolean };
 type SceneRuntime = { refresh: (props: SkySceneProps) => void; destroy: () => void };
 type SatelliteMotion = { position: THREE.Vector3; velocity: THREE.Vector3 };
+type RadiantView = { element: HTMLElement; caption: HTMLElement; position: THREE.Vector3; guides: { element: HTMLElement; line: HTMLElement; position: THREE.Vector3 }[]; guideKey: string };
+// Angular radius of the radiant glow. Meteors appear all over the sky; this marks where their trails point back to.
+const RADIANT_RADIUS = 11;
+const METEOR_STREAKS = [[-24,.30,.0],[38,.42,2.6],[97,.26,5.1],[151,.36,1.3],[203,.30,3.9],[258,.40,6.2],[312,.28,.7],[352,.34,4.6]];
 
 const skyVertex = `
   varying vec3 vDirection;
@@ -299,6 +303,9 @@ function buildScene(host: HTMLDivElement, labelHost: HTMLDivElement, initial: Sk
   let satelliteMotions=new Map<string,SatelliteMotion>();
   let satelliteIndices: {index:number;object:SkyObject}[]=[];
   let renderAheadMs=0;
+  let overlayNight=1;
+  const radiants=new Map<string,RadiantView>();
+  let guideNames=new Set<string>();
   const skyQuaternion=new THREE.Quaternion();
   const rotationMatrix=new THREE.Matrix4();
   const sunDirection=new THREE.Vector3();
@@ -383,6 +390,59 @@ function buildScene(host: HTMLDivElement, labelHost: HTMLDivElement, initial: Sk
     }
   };
 
+  const syncRadiants=(next:MeteorRadiant[]) => {
+    const ids=new Set(next.map(radiant=>radiant.id));
+    guideNames=new Set(next.flatMap(radiant=>radiant.guides.map(guide=>guide.name)));
+    for(const [id,view] of radiants) if(!ids.has(id)) {
+      view.element.remove();
+      view.guides.forEach(guide=>{guide.element.remove();guide.line.remove();});
+      radiants.delete(id);
+    }
+    for(const radiant of next) {
+      let view=radiants.get(radiant.id);
+      if(!view) {
+        const element=document.createElement('div');
+        element.className='sky-meteor';
+        element.innerHTML=`<span class="sky-meteor-glow"></span><span class="sky-meteor-core"></span><span class="sky-meteor-streaks">${METEOR_STREAKS.map(([angle,offset,delay])=>`<i style="--a:${angle}deg;--o:${offset};--d:${delay}s"></i>`).join('')}</span>`;
+        const label=document.createElement('button');
+        label.type='button';
+        label.className='sky-meteor-label';
+        label.setAttribute('aria-label',`${radiant.name} meteor shower radiant`);
+        label.innerHTML='<span></span><small></small>';
+        label.firstElementChild!.textContent=radiant.name;
+        label.addEventListener('click',()=>props.onSelectShower(radiant.id));
+        element.appendChild(label);
+        labelHost.appendChild(element);
+        view={element,caption:label.querySelector('small')!,position:new THREE.Vector3(),guides:[],guideKey:''};
+        radiants.set(radiant.id,view);
+      }
+      view.caption.textContent=radiant.caption;
+      view.element.style.setProperty('--strength',radiant.strength.toFixed(2));
+      view.element.classList.toggle('is-selected',props.selectedShowerId===radiant.id);
+      view.position.copy(direction(radiant.azimuth,radiant.altitude,SKY_RADIUS));
+      const guideKey=radiant.guides.map(guide=>guide.name).join('|');
+      if(guideKey!==view.guideKey) {
+        view.guides.forEach(guide=>{guide.element.remove();guide.line.remove();});
+        view.guides=radiant.guides.map(guide=>{
+          const line=document.createElement('span');
+          line.className='sky-meteor-guide-line';
+          const element=document.createElement('span');
+          element.className='sky-meteor-guide';
+          element.innerHTML='<i></i><span></span>';
+          element.lastElementChild!.textContent=guide.name;
+          labelHost.append(line,element);
+          return {element,line,position:new THREE.Vector3()};
+        });
+        view.guideKey=guideKey;
+      }
+      radiant.guides.forEach((guide,index)=>{
+        view.guides[index].position.copy(direction(guide.azimuth,guide.altitude,SKY_RADIUS));
+        view.guides[index].element.classList.toggle('is-selected',props.selectedShowerId===radiant.id);
+        view.guides[index].line.classList.toggle('is-selected',props.selectedShowerId===radiant.id);
+      });
+    }
+  };
+
   const rebuildConstellations=() => {
     if(!constellationData) return;
     const positions: number[]=[];
@@ -442,6 +502,8 @@ function buildScene(host: HTMLDivElement, labelHost: HTMLDivElement, initial: Sk
     const night=1-THREE.MathUtils.smoothstep(sunAltitude,-18,-8);
     skyMaterial.uniforms.uDay.value=daylight;
     skyMaterial.uniforms.uNight.value=night;
+    overlayNight=0.35+0.65*night;
+    syncRadiants(props.meteorRadiants);
     if(skyChanged) {
       galacticPole.copy(galacticDirection(192.85948/15,27.12825,props.objectsDate,props.observer));
       galacticCore.copy(galacticDirection(266.4051/15,-28.936175,props.objectsDate,props.observer));
@@ -707,13 +769,44 @@ function buildScene(host: HTMLDivElement, labelHost: HTMLDivElement, initial: Sk
       const x=(projected.x+1)*width/2;
       const y=(1-projected.y)*height/2;
       let shown=inFront && projected.z<=1 && x>18 && x<width-18 && y>20 && y<height-28;
-      if(label.object?.id===props.selectedId) shown=false;
+      if(label.object?.id===props.selectedId || (label.object && guideNames.has(label.object.name))) shown=false;
       if(shown && !label.compass) {
         if(occupied.some(point=>Math.abs(point.x-x)<95 && Math.abs(point.y-y)<28)) shown=false;
         else occupied.push({x,y});
       }
       label.element.style.display=shown?'':'none';
       if(shown) label.element.style.transform=`translate3d(${x.toFixed(1)}px,${y.toFixed(1)}px,0)`;
+    }
+    const pixelsPerRadian=(height/2)/Math.tan(camera.fov*RAD/2);
+    const radius=clamp(pixelsPerRadian*Math.tan(RADIANT_RADIUS*RAD),34,Math.max(width,height)*0.6);
+    const screenPoint=(position:THREE.Vector3) => {
+      projected.copy(position).applyQuaternion(skyQuaternion);
+      const altitude=Math.asin(clamp(projected.y/SKY_RADIUS,-1,1))/RAD;
+      const inFront=projected.dot(cameraForward)>0;
+      projected.project(camera);
+      return {x:(projected.x+1)*width/2,y:(1-projected.y)*height/2,altitude,inFront};
+    };
+    for(const view of radiants.values()) {
+      const center=screenPoint(view.position);
+      const shown=center.inFront && center.altitude>-2 && center.x>-radius && center.x<width+radius && center.y>-radius && center.y<height+radius;
+      view.element.style.display=shown?'':'none';
+      if(shown) {
+        view.element.style.transform=`translate3d(${center.x.toFixed(1)}px,${center.y.toFixed(1)}px,0)`;
+        view.element.style.setProperty('--r',`${radius.toFixed(1)}px`);
+        view.element.style.setProperty('--night',(overlayNight*clamp((center.altitude+2)/10,0,1)).toFixed(2));
+      }
+      for(const guide of view.guides) {
+        const point=screenPoint(guide.position);
+        const guideShown=shown && point.inFront && point.altitude>0 && point.x>18 && point.x<width-18 && point.y>20 && point.y<height-28;
+        guide.element.style.display=guideShown?'':'none';
+        guide.line.style.display=guideShown?'':'none';
+        if(!guideShown) continue;
+        guide.element.style.transform=`translate3d(${point.x.toFixed(1)}px,${point.y.toFixed(1)}px,0)`;
+        const dx=center.x-point.x, dy=center.y-point.y, length=Math.hypot(dx,dy);
+        const visibleLength=Math.max(0,length-24);
+        guide.line.style.width=`${visibleLength.toFixed(1)}px`;
+        guide.line.style.transform=`translate3d(${point.x.toFixed(1)}px,${point.y.toFixed(1)}px,0) rotate(${Math.atan2(dy,dx).toFixed(4)}rad) translateX(10px)`;
+      }
     }
     const selected=selectedObject;
     if(selected && selected.available!==false && Number.isFinite(selected.altitude) && selected.altitude>=0) {

@@ -15,10 +15,12 @@ export interface ConstellationLine { name: string; points: [number, number][]; }
 export interface SatelliteRecord { name: string; line1: string; line2: string; }
 export interface SmallBodyRecord { id: string; name: string; category: 'comet' | 'asteroid'; description: string; }
 export interface EphemerisResult { object: SkyObject; rise: RiseEvent | null; sampledAt: string; source: string; }
+export interface MeteorRadiant { id: string; name: string; altitude: number; azimuth: number; strength: number; caption: string; guides: { name: string; altitude: number; azimuth: number }[]; }
 export interface SkySceneProps {
   objects: SkyObject[]; selectedId: string | null; mode: ObservingMode;
   observer: ObserverLocation; date: Date; objectsDate: Date; timeRate: number; constellations: boolean; grid: boolean;
   landscape: boolean; focus: { id: string; azimuth: number; altitude: number; nonce: number } | null;
   zoom: number; onZoomChange: (zoom: number) => void; onSelect: (id: string) => void;
   onViewChange?: (view: { azimuth: number; altitude: number; fov: number }) => void;
+  meteorRadiants: MeteorRadiant[]; selectedShowerId: string | null; onSelectShower: (id: string) => void;
 }

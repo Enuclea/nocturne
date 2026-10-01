@@ -34,3 +34,29 @@
   .sky-edge-name { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .sky-object-label { transition: none; } }
+
+/* Meteor shower radiants: a soft glow where trails point back to, with occasional faint streaks. */
+.sky-meteor { --r: 80px; --strength: .5; --night: 1; position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; opacity: calc(var(--night) * (.45 + var(--strength) * .55)); transition: opacity .4s; }
+.sky-meteor-glow { position: absolute; width: calc(var(--r) * 2); height: calc(var(--r) * 2); left: calc(var(--r) * -1); top: calc(var(--r) * -1); border-radius: 50%; background: radial-gradient(circle, #e8cf9f30 0, #e8cf9f1a 32%, #e8cf9f08 55%, transparent 70%); }
+.sky-meteor-core { position: absolute; width: 14px; height: 14px; left: -7px; top: -7px; border: 1px dashed #e3cd9659; border-radius: 50%; }
+.sky-meteor-streaks > i { position: absolute; left: 0; top: 0; width: 1px; height: calc(var(--r) * .3); transform-origin: 0 0; background: linear-gradient(to bottom, transparent, #f4e2bdb0); opacity: 0; transform: rotate(var(--a)) translateY(calc(var(--r) * var(--o))); animation: sky-meteor-streak 7.4s var(--d) ease-out infinite; }
+@keyframes sky-meteor-streak {
+  0% { opacity: 0; transform: rotate(var(--a)) translateY(calc(var(--r) * var(--o))); }
+  4% { opacity: .9; }
+  14% { opacity: 0; transform: rotate(var(--a)) translateY(calc(var(--r) * (var(--o) + .32))); }
+  100% { opacity: 0; transform: rotate(var(--a)) translateY(calc(var(--r) * (var(--o) + .32))); }
+}
+@media (prefers-reduced-motion: reduce) { .sky-meteor-streaks > i { animation: none; opacity: .28; } }
+.sky-meteor-label { position: absolute; left: 0; top: 0; translate: 14px -50%; display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; border: 0; background: transparent; color: #e2cfa6d9; font: 400 11px/1.35 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .05em; white-space: nowrap; text-align: left; text-shadow: 0 1px 8px #020711; cursor: pointer; pointer-events: auto; }
+.sky-meteor-label small { font-size: 9px; color: #a9b4bfb8; letter-spacing: .04em; }
+.sky-meteor-label:hover, .sky-meteor.is-selected .sky-meteor-label { color: #f6e7c5; }
+.sky-meteor-label:focus-visible { outline: 1px solid #c9b98f; outline-offset: 5px; border-radius: 2px; }
+.sky-meteor.is-selected { opacity: var(--night); }
+.sky-meteor.is-selected .sky-meteor-core { border-color: #e3cd96a6; }
+.sky-meteor-guide { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; color: #c9d3dcc4; }
+.sky-meteor-guide > i { position: absolute; width: 12px; height: 12px; left: -6px; top: -6px; border: 1px solid #c9d6e24d; border-radius: 50%; }
+.sky-meteor-guide > span { position: absolute; left: 11px; top: -8px; font: 400 10px/1.5 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .05em; white-space: nowrap; text-shadow: 0 1px 8px #020711; }
+.sky-meteor-guide-line { position: absolute; left: 0; top: 0; height: 0; border-top: 1px dashed #d8c69a33; transform-origin: 0 0; pointer-events: none; }
+.sky-meteor-guide.is-selected { color: #eadbb8; }
+.sky-meteor-guide.is-selected > i { border-color: #e3cd9680; }
+.sky-meteor-guide-line.is-selected { border-top-color: #e3cd9666; }
