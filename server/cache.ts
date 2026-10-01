@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { createLimiter } from './rateLimit.js';
 
 const directory = process.env.CACHE_DIR || join(process.cwd(), '.cache');
 const memory = new Map<string, { expires: number; value: unknown }>();
@@ -49,7 +50,18 @@ export function nasaRequest<T>(task: () => Promise<T>): Promise<T> {
   return result;
 }
 
+// Fresh (uncached) calls per upstream host per minute, across all visitors. This holds even if
+// requests arrive from many addresses, so a flood cannot get this server blocked upstream.
+const UPSTREAM_BUDGET: Record<string, number> = { 'ssd.jpl.nasa.gov': 30, 'ssd-api.jpl.nasa.gov': 30, 'celestrak.org': 10 };
+const upstreamLimiters = new Map<string, ReturnType<typeof createLimiter>>();
+function withinUpstreamBudget(host: string) {
+  let limiter = upstreamLimiters.get(host);
+  if (!limiter) { limiter = createLimiter(UPSTREAM_BUDGET[host] ?? 60, 60_000); upstreamLimiters.set(host, limiter); }
+  return limiter('all').allowed;
+}
+
 export async function remoteText(url: URL | string): Promise<string> {
+  if (!withinUpstreamBudget(new URL(url).hostname)) throw new Error('Nocturne is busy right now. Please try again in a minute.');
   const response = await fetch(url, {
     signal: AbortSignal.timeout(25_000),
     headers: { 'User-Agent': process.env.JPL_USER_AGENT || 'Nocturne/1.0 (personal local observatory; http://localhost:3001)', Accept: 'application/json, text/plain' },

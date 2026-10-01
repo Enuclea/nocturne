@@ -6,6 +6,7 @@ services:
     environment:
       NODE_ENV: production
       CACHE_DIR: /data/cache
+      TRUST_CLOUDFLARE: ${TRUST_CLOUDFLARE:-false}
       JPL_USER_AGENT: ${JPL_USER_AGENT:-Nocturne/1.0 (personal local observatory; http://localhost:8088)}
     volumes:
       - sky-cache:/data/cache

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { cached, remoteJson, remoteText } from './cache.js';
 import { catalog } from './catalog.js';
+import { rateLimit } from './rateLimit.js';
 import { getEphemeris, searchSmallBodies } from './horizons.js';
 import type { ObserverLocation, SatelliteRecord } from '../src/types.js';
 
@@ -17,17 +18,13 @@ app.use((_req, res, next) => {
   next();
 });
 
-// A modest global budget protects public upstreams on shared deployments.
-let requestWindow = Date.now(), requests = 0;
-app.use('/api', (_req, res, next) => {
-  if (Date.now() - requestWindow > 60_000) { requestWindow = Date.now(); requests = 0; }
-  if (++requests > 180) { res.status(429).json({ error: 'Too many requests. Please wait a minute.' }); return; }
-  next();
-});
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', application: 'Nocturne', version: '1.0.0' }));
+// Per-visitor allowances. A normal session makes a handful of API calls a minute; the routes
+// that can reach public upstreams are tighter. cache.ts also caps fresh upstream calls overall.
+app.use('/api', rateLimit(120));
 app.get('/api/catalog', (_req, res) => res.json({ objects: catalog }));
 
-app.get('/api/geocode', async (req, res) => {
+app.get('/api/geocode', rateLimit(15, 60_000, 'Too many city searches. Please wait a minute and try again.'), async (req, res) => {
   const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   if (query.length < 2 || query.length > 120) { res.status(400).json({ error: 'Enter a city name between 2 and 120 characters.' }); return; }
   try {
@@ -41,7 +38,7 @@ app.get('/api/geocode', async (req, res) => {
   } catch { res.status(502).json({ error: 'City search is temporarily unavailable. You can still enter latitude, longitude.' }); }
 });
 
-app.get('/api/search', async (req, res) => {
+app.get('/api/search', rateLimit(10, 60_000, 'Too many NASA searches. Please wait a minute and try again.'), async (req, res) => {
   const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   if (query.length < 2 || query.length > 80 || !/^[\p{L}\p{N}\s/.'()-]+$/u.test(query)) { res.status(400).json({ error: 'Enter an object name or designation (2–80 characters).' }); return; }
   try { res.json({ objects: await searchSmallBodies(query) }); }
@@ -65,7 +62,7 @@ export function parseEphemerisInput(query: Record<string, unknown>) {
   if (!Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1900 || date.getUTCFullYear() > 2100) throw new Error('Choose a date between 1900 and 2100.');
   return { id, latitude, longitude, elevation, date };
 }
-app.get('/api/ephemeris', async (req, res) => {
+app.get('/api/ephemeris', rateLimit(40, 60_000, 'Too many position requests. Please wait a minute and try again.'), async (req, res) => {
   let input: ReturnType<typeof parseEphemerisInput>;
   try { input = parseEphemerisInput(req.query); }
   catch (error) { res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid observer or date.' }); return; }

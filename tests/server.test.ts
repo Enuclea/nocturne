@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseEphemerisInput, parseTle } from '../server/index.js';
+import type { AddressInfo } from 'node:net';
+import type { Request } from 'express';
+import { app, parseEphemerisInput, parseTle } from '../server/index.js';
+import { clientKey, createLimiter } from '../server/rateLimit.js';
 import { interpolateSample, nextRise, parseHorizons, type Sample } from '../server/horizons.js';
 
 const valid = { id: '1;', lat: '40.7128', lon: '-74.006', elevation: '10', time: '2026-09-30T22:00:00Z' };
@@ -38,4 +41,45 @@ test('TLE parser keeps matching line pairs and rejects upstream HTML', () => {
   assert.equal(parsed.length, 1);
   assert.equal(parsed[0].name, 'ISS (ZARYA)');
   assert.deepEqual(parseTle('<html>Access denied</html>'), []);
+});
+
+test('rate limiter allows a fixed number per window, then resets', () => {
+  let now = 0;
+  const check = createLimiter(3, 60_000, () => now);
+  assert.deepEqual([1, 2, 3, 4].map(() => check('a').allowed), [true, true, true, false]);
+  assert.equal(check('a').retryAfter, 60);
+  assert.equal(check('b').allowed, true);
+  now = 60_000;
+  assert.equal(check('a').allowed, true);
+});
+
+test('client key trusts Cloudflare only when enabled, and groups IPv6 by /64', () => {
+  const req = (remoteAddress: string, cf?: string) => ({ headers: cf ? { 'cf-connecting-ip': cf } : {}, socket: { remoteAddress } }) as unknown as Request;
+  const previous = process.env.TRUST_CLOUDFLARE;
+  try {
+    delete process.env.TRUST_CLOUDFLARE;
+    assert.equal(clientKey(req('::ffff:172.18.0.3', '203.0.113.9')), '172.18.0.3');
+    process.env.TRUST_CLOUDFLARE = 'true';
+    assert.equal(clientKey(req('172.18.0.3', '203.0.113.9')), '203.0.113.9');
+    assert.equal(clientKey(req('172.18.0.3', '2001:db8:aa:bb:1:2:3:4')), clientKey(req('172.18.0.3', '2001:db8:aa:bb::9')));
+    assert.notEqual(clientKey(req('172.18.0.3', '2001:db8:aa:bb::9')), clientKey(req('172.18.0.3', '2001:db8:aa:cc::9')));
+  } finally {
+    if (previous === undefined) delete process.env.TRUST_CLOUDFLARE; else process.env.TRUST_CLOUDFLARE = previous;
+  }
+});
+
+test('API routes return 429 with Retry-After past the allowance; health is never limited', async () => {
+  const server = app.listen(0);
+  try {
+    const { port } = server.address() as AddressInfo;
+    const get = (path: string) => fetch(`http://127.0.0.1:${port}${path}`);
+    // A one-letter city query is rejected locally, so no upstream call is made.
+    const statuses = [];
+    for (let i = 0; i < 16; i++) statuses.push((await get('/api/geocode?q=x')).status);
+    assert.deepEqual(statuses, [...Array(15).fill(400), 429]);
+    const limited = await get('/api/geocode?q=x');
+    assert.ok(Number(limited.headers.get('retry-after')) > 0);
+    assert.match((await limited.json()).error, /Too many city searches/);
+    for (let i = 0; i < 40; i++) assert.equal((await get('/api/health')).status, 200);
+  } finally { server.close(); }
 });
